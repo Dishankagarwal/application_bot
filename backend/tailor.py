@@ -15,7 +15,7 @@ class ResumeTailor:
             raise ValueError("GEMINI_API_KEY environment variable is required.")
         
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-2.5-flash"
+        self.models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-3.5-flash", "gemini-2.0-flash"]
 
     def tailor_resume(self, resume_text: str, job_title: str, job_desc: str) -> Dict[str, Any]:
         """
@@ -63,38 +63,44 @@ Return the result STRICTLY as a JSON object with this exact keys:
 }}
 Do NOT output any markdown blocks like ```json or any other text before/after the JSON. Just the raw JSON.
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+        last_error = None
+        for model in self.models:
+            logger.info(f"Attempting resume tailoring with model {model}...")
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
-            
-            raw_text = response.text.strip()
-            result = json.loads(raw_text)
-            
-            # Verify keys
-            if "tailored_resume_markdown" not in result:
-                result["tailored_resume_markdown"] = resume_text
-            if "changes_made" not in result:
-                result["changes_made"] = []
                 
-            return result
+                raw_text = response.text.strip()
+                result = json.loads(raw_text)
+                
+                # Verify keys
+                if "tailored_resume_markdown" not in result:
+                    result["tailored_resume_markdown"] = resume_text
+                if "changes_made" not in result:
+                    result["changes_made"] = []
+                    
+                return result
 
-        except Exception as e:
-            logger.error(f"Failed to tailor resume: {str(e)}", exc_info=True)
-            return {
-                "tailored_resume_markdown": resume_text,
-                "changes_made": [
-                    {
-                        "section": "System Error",
-                        "change": "None",
-                        "rationale": f"API call failed: {str(e)}"
-                    }
-                ]
-            }
+            except Exception as e:
+                logger.warning(f"Gemini resume tailoring failed with model {model}: {str(e)}")
+                last_error = e
+
+        logger.error(f"All Gemini models failed for resume tailoring. Last error: {str(last_error)}", exc_info=True)
+        return {
+            "tailored_resume_markdown": resume_text,
+            "changes_made": [
+                {
+                    "section": "System Error",
+                    "change": "None",
+                    "rationale": f"API call failed: {str(last_error)}"
+                }
+            ]
+        }
 
 if __name__ == "__main__":
     from dotenv import load_dotenv

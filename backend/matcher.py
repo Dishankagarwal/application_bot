@@ -16,7 +16,7 @@ class JobMatcher:
             raise ValueError("GEMINI_API_KEY environment variable is required.")
         
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-2.5-flash"
+        self.models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-3.5-flash", "gemini-2.0-flash"]
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extracts plain text from a PDF file using pypdf."""
@@ -35,6 +35,110 @@ class JobMatcher:
         except Exception as e:
             logger.error(f"Failed to parse PDF resume: {str(e)}")
             raise
+
+    def extract_text_and_style(self, pdf_path: str) -> tuple[str, dict]:
+        """
+        Extracts plain text and basic visual styling options from the PDF.
+        Returns (resume_text, style_dict).
+        """
+        logger.info(f"Extracting text and styling from PDF: {pdf_path}")
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+        except ImportError:
+            logger.warning("PyMuPDF (fitz) is not installed. Falling back to pypdf.")
+            text = self.extract_text_from_pdf(pdf_path)
+            return text, {
+                "font_family": "sans-serif",
+                "accent_color": "#1e3a8a",
+                "layout": "single_column"
+            }
+
+        try:
+            text_parts = []
+            font_counts = {}
+            color_counts = {}
+            left_blocks_count = 0
+            right_blocks_count = 0
+            
+            for page in doc:
+                text_parts.append(page.get_text())
+                page_width = page.rect.width
+                page_dict = page.get_text("dict")
+                
+                for block in page_dict.get("blocks", []):
+                    bbox = block.get("bbox")  # (x0, y0, x1, y1)
+                    if bbox:
+                        x0, y0, x1, y1 = bbox
+                        if x1 <= page_width * 0.55:
+                            left_blocks_count += 1
+                        elif x0 >= page_width * 0.45:
+                            right_blocks_count += 1
+                            
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            font = span.get("font", "").lower()
+                            color = span.get("color", 0)
+                            text = span.get("text", "").strip()
+                            
+                            if font:
+                                font_counts[font] = font_counts.get(font, 0) + len(text)
+                            if color and text:
+                                color_counts[color] = color_counts.get(color, 0) + len(text)
+
+            full_text = "\n".join(text_parts).strip()
+            
+            # Detect font family
+            font_family = "sans-serif"
+            if font_counts:
+                dominant_font = max(font_counts, key=font_counts.get)
+                serif_keywords = ["times", "georgia", "garamond", "cambria", "serif", "roman", "minion", "baskerville", "palatino"]
+                if any(keyword in dominant_font for keyword in serif_keywords):
+                    font_family = "serif"
+            
+            # Detect accent color
+            accent_color = "#1e3a8a" # Default slate/navy blue
+            valid_colors = {}
+            for color, count in color_counts.items():
+                r = (color >> 16) & 255
+                g = (color >> 8) & 255
+                b = color & 255
+                
+                # Exclude black/very dark gray (all < 50) and white/very light gray (all > 235)
+                if not (r < 50 and g < 50 and b < 50) and not (r > 235 and g > 235 and b > 235):
+                    # Also make sure it's not a generic light gray (e.g. difference between channels is small)
+                    if max(r, g, b) - min(r, g, b) > 20:
+                        valid_colors[color] = count
+                        
+            if valid_colors:
+                dominant_color_int = max(valid_colors, key=valid_colors.get)
+                dr = (dominant_color_int >> 16) & 255
+                dg = (dominant_color_int >> 8) & 255
+                db = dominant_color_int & 255
+                accent_color = f"#{dr:02x}{dg:02x}{db:02x}"
+                
+            # Detect layout
+            layout = "single_column"
+            if left_blocks_count > 10 and right_blocks_count > 10:
+                layout = "two_column"
+                
+            style_dict = {
+                "font_family": font_family,
+                "accent_color": accent_color,
+                "layout": layout
+            }
+            logger.info(f"Detected resume style: {style_dict}")
+            return full_text, style_dict
+            
+        except Exception as e:
+            logger.error(f"Error analyzing PDF style: {str(e)}")
+            # Return text extraction only with default styling
+            text = "\n".join([page.get_text() for page in doc]).strip()
+            return text, {
+                "font_family": "sans-serif",
+                "accent_color": "#1e3a8a",
+                "layout": "single_column"
+            }
 
     def analyze_match(self, resume_text: str, job_title: str, job_desc: str) -> Dict[str, Any]:
         """
@@ -76,45 +180,51 @@ Return the result STRICTLY as a JSON object with this exact keys:
 }}
 Do NOT output any markdown blocks like ```json or any other text before/after the JSON. Just the raw JSON object.
 """
-        try:
-            # We can use the Structured JSON feature in Gemini GenAI SDK:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+        last_error = None
+        for model in self.models:
+            logger.info(f"Attempting match analysis with model {model}...")
+            try:
+                # We can use the Structured JSON feature in Gemini GenAI SDK:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
-            
-            raw_text = response.text.strip()
-            # Parse response as JSON
-            analysis_result = json.loads(raw_text)
-            
-            # Ensure essential keys exist
-            defaults = {
-                "match_score": 50,
-                "summary": "Match computed successfully.",
-                "matched_keywords": [],
-                "missing_keywords": [],
-                "strengths": [],
-                "weaknesses": []
-            }
-            for k, v in defaults.items():
-                if k not in analysis_result:
-                    analysis_result[k] = v
-                    
-            return analysis_result
+                
+                raw_text = response.text.strip()
+                # Parse response as JSON
+                analysis_result = json.loads(raw_text)
+                
+                # Ensure essential keys exist
+                defaults = {
+                    "match_score": 50,
+                    "summary": "Match computed successfully.",
+                    "matched_keywords": [],
+                    "missing_keywords": [],
+                    "strengths": [],
+                    "weaknesses": []
+                }
+                for k, v in defaults.items():
+                    if k not in analysis_result:
+                        analysis_result[k] = v
+                        
+                return analysis_result
 
-        except Exception as e:
-            logger.error(f"Gemini match analysis failed: {str(e)}", exc_info=True)
-            return {
-                "match_score": 0,
-                "summary": f"Failed to perform matching: {str(e)}",
-                "matched_keywords": [],
-                "missing_keywords": [],
-                "strengths": [],
-                "weaknesses": ["Error in Gemini analysis"]
-            }
+            except Exception as e:
+                logger.warning(f"Gemini match analysis failed with model {model}: {str(e)}")
+                last_error = e
+
+        logger.error(f"All Gemini models failed for match analysis. Last error: {str(last_error)}", exc_info=True)
+        return {
+            "match_score": 0,
+            "summary": f"Failed to perform matching: {str(last_error)}",
+            "matched_keywords": [],
+            "missing_keywords": [],
+            "strengths": [],
+            "weaknesses": ["Error in Gemini analysis"]
+        }
 
     def analyze_matches_batch(self, resume_text: str, jobs: list) -> Dict[str, Dict[str, Any]]:
         """
@@ -172,40 +282,46 @@ Return the result STRICTLY as a JSON object containing a single key "matches", w
 }}
 Do NOT output any markdown blocks like ```json or any other text before/after the JSON. Just the raw JSON object.
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+        last_error = None
+        for model in self.models:
+            logger.info(f"Attempting batch match analysis with model {model}...")
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
-            raw_text = response.text.strip()
-            result = json.loads(raw_text)
-            
-            # Map by job ID for easy lookup
-            matches_map = {}
-            for match in result.get("matches", []):
-                job_id = match.get("id")
-                if job_id:
-                    # Provide defaults for missing keys
-                    defaults = {
-                        "match_score": 50,
-                        "summary": "Match computed successfully.",
-                        "matched_keywords": [],
-                        "missing_keywords": [],
-                        "strengths": [],
-                        "weaknesses": []
-                    }
-                    for k, v in defaults.items():
-                        if k not in match:
-                            match[k] = v
-                    matches_map[job_id] = match
-            return matches_map
-            
-        except Exception as e:
-            logger.error(f"Gemini batch match analysis failed: {str(e)}", exc_info=True)
-            return {}
+                raw_text = response.text.strip()
+                result = json.loads(raw_text)
+                
+                # Map by job ID for easy lookup
+                matches_map = {}
+                for match in result.get("matches", []):
+                    job_id = match.get("id")
+                    if job_id:
+                        # Provide defaults for missing keys
+                        defaults = {
+                            "match_score": 50,
+                            "summary": "Match computed successfully.",
+                            "matched_keywords": [],
+                            "missing_keywords": [],
+                            "strengths": [],
+                            "weaknesses": []
+                        }
+                        for k, v in defaults.items():
+                            if k not in match:
+                                match[k] = v
+                        matches_map[job_id] = match
+                return matches_map
+                
+            except Exception as e:
+                logger.warning(f"Gemini batch match analysis failed with model {model}: {str(e)}")
+                last_error = e
+
+        logger.error(f"All Gemini models failed for batch match analysis. Last error: {str(last_error)}", exc_info=True)
+        return {}
 
 if __name__ == "__main__":
     # Test if script runs and accesses Gemini successfully

@@ -12,7 +12,11 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('Python Backend Developer');
   const [location, setLocation] = useState('Remote');
   const [resultsWanted, setResultsWanted] = useState(15);
-  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'glassdoor', 'zip_recruiter']);
+  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt']);
+  const [jobType, setJobType] = useState('any'); // 'any', 'fulltime', 'contract'
+  const [minSalary, setMinSalary] = useState('');
+  const [maxSalary, setMaxSalary] = useState('');
+  const [hoursOld, setHoursOld] = useState(''); // '', '168' (7 days), '720' (1 month)
   
   // Scraped Jobs state
   const [jobs, setJobs] = useState([]);
@@ -153,7 +157,11 @@ export default function App() {
         search_term: searchTerm,
         location: location,
         results_wanted: resultsWanted,
-        site_names: selectedSites
+        site_names: selectedSites,
+        job_type: jobType === 'any' ? null : jobType,
+        min_salary: minSalary ? parseInt(minSalary) : null,
+        max_salary: maxSalary ? parseInt(maxSalary) : null,
+        hours_old: hoursOld ? parseInt(hoursOld) : null
       })
     })
       .then(res => {
@@ -209,6 +217,9 @@ export default function App() {
         setShowModal(false);
         setTailorLoading(false);
       });
+  // Download Tailored PDF Action
+  const handleDownloadPdf = (jobId) => {
+    window.open(`${API_BASE}/download-tailored-pdf?job_id=${jobId}`, '_blank');
   };
 
   // Copy to Clipboard Action
@@ -343,9 +354,57 @@ export default function App() {
               </div>
 
               <div className="form-group">
+                <label className="form-label">Job Type</label>
+                <select 
+                  className="form-input" 
+                  value={jobType} 
+                  onChange={(e) => setJobType(e.target.value)}
+                >
+                  <option value="any">Any Type</option>
+                  <option value="fulltime">Full Time</option>
+                  <option value="contract">Freelancing</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Package Range (Annual USD)</label>
+                <div className="salary-inputs-row" style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={minSalary} 
+                    onChange={(e) => setMinSalary(e.target.value)}
+                    placeholder="Min"
+                    min="0"
+                  />
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={maxSalary} 
+                    onChange={(e) => setMaxSalary(e.target.value)}
+                    placeholder="Max"
+                    min="0"
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Date Posted</label>
+                <select 
+                  className="form-input" 
+                  value={hoursOld} 
+                  onChange={(e) => setHoursOld(e.target.value)}
+                >
+                  <option value="">Anytime</option>
+                  <option value="168">Last 7 Days</option>
+                  <option value="720">Last 1 Month</option>
+                </select>
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">Preferred Platforms</label>
                 <div className="sites-checkbox-grid">
-                  {['linkedin', 'indeed', 'glassdoor', 'zip_recruiter'].map(site => (
+                  {['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt'].map(site => (
                     <div 
                       key={site} 
                       className={`checkbox-card ${selectedSites.includes(site) ? 'selected' : ''}`}
@@ -502,6 +561,15 @@ export default function App() {
                         >
                           ✨ Tailor Resume
                         </button>
+
+                        <button 
+                          className="btn-secondary" 
+                          onClick={() => handleDownloadPdf(job.id)}
+                          disabled={!resume}
+                          title={!resume ? "Please upload a resume first" : "Download tailored PDF resume"}
+                        >
+                          📄 Download PDF
+                        </button>
                         
                         {job.job_url && (
                           <a 
@@ -584,6 +652,14 @@ export default function App() {
               )}
               <button className="btn-secondary" onClick={() => setShowModal(false)}>
                 Close
+              </button>
+              <button 
+                className="btn-secondary" 
+                onClick={() => handleDownloadPdf(selectedJob.id)}
+                disabled={tailorLoading || !tailoredResume}
+                style={{ width: 'auto', padding: '0.75rem 1.5rem' }}
+              >
+                📥 Download PDF
               </button>
               <button 
                 className="btn-primary" 

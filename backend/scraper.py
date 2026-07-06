@@ -1,4 +1,5 @@
 import math
+import logging
 import pandas as pd
 from typing import List, Dict, Any
 from jobspy import scrape_jobs
@@ -15,26 +16,44 @@ def run_job_search(
     search_term: str,
     location: str,
     results_wanted: int = 15,
-    site_names: List[str] = None
+    site_names: List[str] = None,
+    job_type: str = None,
+    min_amount: int = None,
+    max_amount: int = None,
+    hours_old: int = None
 ) -> List[Dict[str, Any]]:
     """
     Scrapes jobs from multiple job boards using python-jobspy.
     Normalizes the output DataFrame to a JSON-serializable list of dictionaries.
     """
     if not site_names:
-        site_names = ["linkedin", "indeed", "zip_recruiter", "glassdoor"]
+        site_names = ["linkedin", "indeed", "zip_recruiter", "glassdoor", "google", "naukri", "bayt"]
     
-    logger.info(f"Searching for '{search_term}' in '{location}' across {site_names}...")
+    logger.info(f"Searching for '{search_term}' in '{location}' across {site_names} with filters (job_type={job_type}, min_amount={min_amount}, max_amount={max_amount}, hours_old={hours_old})...")
     
     try:
+        # Build arguments dictionary dynamically
+        scrape_kwargs = {
+            "site_name": site_names,
+            "search_term": search_term,
+            "location": location,
+            "results_wanted": results_wanted,
+            "country_indeed": 'USA'  # Default country context
+        }
+        
+        if job_type:
+            scrape_kwargs["job_type"] = job_type
+        if min_amount is not None:
+            scrape_kwargs["min_amount"] = min_amount
+        if max_amount is not None:
+            scrape_kwargs["max_amount"] = max_amount
+        if hours_old is not None:
+            scrape_kwargs["hours_old"] = hours_old
+        if min_amount is not None or max_amount is not None:
+            scrape_kwargs["enforce_annual_salary"] = True
+
         # python-jobspy returns a pandas DataFrame
-        jobs_df = scrape_jobs(
-            site_name=site_names,
-            search_term=search_term,
-            location=location,
-            results_wanted=results_wanted,
-            country_indeed='USA'  # Default country context
-        )
+        jobs_df = scrape_jobs(**scrape_kwargs)
         
         if jobs_df is None or jobs_df.empty:
             logger.info("No jobs found matching the query.")

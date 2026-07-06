@@ -81,6 +81,31 @@ def test_pipeline():
         print(f"[FAIL] Resume Tailor failed: {e}")
         return False
         
+    # 4. Test PDF Generation
+    print("\n--- Testing PDF Generation ---")
+    try:
+        import markdown
+        from xhtml2pdf import pisa
+        from io import BytesIO
+        
+        test_markdown = "# John Doe\n\n- Python Developer\n- FastAPI expert"
+        html = markdown.markdown(test_markdown)
+        pdf_io = BytesIO()
+        pisa_status = pisa.CreatePDF(html, dest=pdf_io)
+        if pisa_status.err:
+            print(f"[FAIL] PDF Generation returned error status: {pisa_status.err}")
+            return False
+        
+        pdf_bytes = pdf_io.getvalue()
+        if len(pdf_bytes) > 0:
+            print(f"[PASS] Successfully generated PDF from Markdown ({len(pdf_bytes)} bytes).")
+        else:
+            print("[FAIL] Generated PDF is empty.")
+            return False
+    except Exception as e:
+        print(f"[FAIL] PDF Generation failed: {e}")
+        return False
+        
     print("\n" + "="*60)
     print("[SUCCESS] All backend pipeline components verified successfully.")
     print("="*60)

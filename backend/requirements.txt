@@ -6,3 +6,6 @@ pypdf
 python-dotenv
 pandas
 python-multipart
+PyMuPDF
+xhtml2pdf
+markdown
