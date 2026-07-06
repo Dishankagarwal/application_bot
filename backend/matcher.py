@@ -116,6 +116,97 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
                 "weaknesses": ["Error in Gemini analysis"]
             }
 
+    def analyze_matches_batch(self, resume_text: str, jobs: list) -> Dict[str, Dict[str, Any]]:
+        """
+        Analyzes a batch of jobs against the resume in a single Gemini call.
+        Returns a dict mapping job_id -> match analysis dict.
+        """
+        logger.info(f"Analyzing {len(jobs)} jobs in batch...")
+        if not jobs:
+            return {}
+            
+        # Format the jobs for the prompt, truncating descriptions to keep context concise
+        formatted_jobs = []
+        for job in jobs:
+            desc = job.get("description") or ""
+            truncated_desc = desc[:2500] + ("..." if len(desc) > 2500 else "")
+            formatted_jobs.append({
+                "id": job["id"],
+                "title": job.get("title", ""),
+                "company": job.get("company", ""),
+                "description": truncated_desc
+            })
+            
+        prompt = f"""
+You are an expert recruiter and resume reviewer. Compare the Candidate Resume text against the list of Job Openings.
+
+=== Candidate Resume ===
+{resume_text}
+
+=== Job Openings ===
+{json.dumps(formatted_jobs, indent=2)}
+
+=== Output Instructions ===
+Compare the candidate's resume against each job opening. For each job, compute:
+1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job.
+2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit.
+3. `matched_keywords`: Key technical skills/keywords that exist in both the job description and the resume.
+4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume.
+5. `strengths`: Bullet points listing the candidate's main strengths matching the job.
+6. `weaknesses`: Bullet points listing gaps or weaknesses relative to the job requirements.
+
+Return the result STRICTLY as a JSON object containing a single key "matches", which is a list of objects. Each object in the list must correspond to the input jobs, using the same "id":
+{{
+  "matches": [
+    {{
+      "id": "job-id-from-input",
+      "match_score": 85,
+      "summary": "Candidate has strong backend experience matching FastAPI and Python requirements. However, they lack the Docker containerization skills.",
+      "matched_keywords": ["Python", "FastAPI", "SQL"],
+      "missing_keywords": ["Docker", "Kubernetes"],
+      "strengths": ["3+ years of python development", "Experience building REST APIs"],
+      "weaknesses": ["No containerization experience listed", "No CI/CD pipeline experience"]
+    }},
+    ...
+  ]
+}}
+Do NOT output any markdown blocks like ```json or any other text before/after the JSON. Just the raw JSON object.
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            raw_text = response.text.strip()
+            result = json.loads(raw_text)
+            
+            # Map by job ID for easy lookup
+            matches_map = {}
+            for match in result.get("matches", []):
+                job_id = match.get("id")
+                if job_id:
+                    # Provide defaults for missing keys
+                    defaults = {
+                        "match_score": 50,
+                        "summary": "Match computed successfully.",
+                        "matched_keywords": [],
+                        "missing_keywords": [],
+                        "strengths": [],
+                        "weaknesses": []
+                    }
+                    for k, v in defaults.items():
+                        if k not in match:
+                            match[k] = v
+                    matches_map[job_id] = match
+            return matches_map
+            
+        except Exception as e:
+            logger.error(f"Gemini batch match analysis failed: {str(e)}", exc_info=True)
+            return {}
+
 if __name__ == "__main__":
     # Test if script runs and accesses Gemini successfully
     # Ensure GEMINI_API_KEY is loaded via environment variables

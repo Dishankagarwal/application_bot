@@ -5,3 +5,4 @@ google-generativeai
 pypdf
 python-dotenv
 pandas
+python-multipart

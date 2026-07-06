@@ -1,10 +1,15 @@
-import logging
+import math
 import pandas as pd
 from typing import List, Dict, Any
 from jobspy import scrape_jobs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def clean_val(v, default=""):
+    if v is None or (isinstance(v, float) and math.isnan(v)) or pd.isna(v):
+        return default
+    return v
 
 def run_job_search(
     search_term: str,
@@ -37,38 +42,35 @@ def run_job_search(
             
         logger.info(f"Scraped {len(jobs_df)} jobs.")
         
-        # Replace NaN values with None so it converts to clean JSON null values
-        jobs_df = jobs_df.where(pd.notnull(jobs_df), None)
-        
         normalized_jobs = []
         for _, row in jobs_df.iterrows():
             # Get job description, handling potential missing columns
-            desc = row.get("description") or ""
+            desc = clean_val(row.get("description"), "")
             
             # Format salary if present
             salary = ""
-            min_sal = row.get("min_amount")
-            max_sal = row.get("max_amount")
-            curr = row.get("currency") or "$"
-            interval = row.get("interval") or "yearly"
+            min_sal = clean_val(row.get("min_amount"), None)
+            max_sal = clean_val(row.get("max_amount"), None)
+            curr = clean_val(row.get("currency"), "$")
+            interval = clean_val(row.get("interval"), "yearly")
             
-            if min_sal and max_sal:
+            if min_sal is not None and max_sal is not None:
                 salary = f"{curr}{min_sal:,} - {curr}{max_sal:,} per {interval}"
-            elif min_sal:
+            elif min_sal is not None:
                 salary = f"{curr}{min_sal:,}+ per {interval}"
-            elif max_sal:
+            elif max_sal is not None:
                 salary = f"Up to {curr}{max_sal:,} per {interval}"
                 
             job_item = {
-                "id": str(row.get("id") or ""),
-                "site": str(row.get("site") or "unknown"),
-                "job_url": str(row.get("job_url") or row.get("job_url_direct") or ""),
-                "title": str(row.get("title") or "No Title"),
-                "company": str(row.get("company") or "Unknown Company"),
-                "location": str(row.get("location") or "Unknown Location"),
-                "date_posted": str(row.get("date_posted") or ""),
-                "job_type": str(row.get("job_type") or ""),
-                "is_remote": bool(row.get("is_remote")) if row.get("is_remote") is not None else False,
+                "id": str(clean_val(row.get("id"), "")),
+                "site": str(clean_val(row.get("site"), "unknown")),
+                "job_url": str(clean_val(row.get("job_url") or row.get("job_url_direct"), "")),
+                "title": str(clean_val(row.get("title"), "No Title")),
+                "company": str(clean_val(row.get("company"), "Unknown Company")),
+                "location": str(clean_val(row.get("location"), "Unknown Location")),
+                "date_posted": str(clean_val(row.get("date_posted"), "")),
+                "job_type": str(clean_val(row.get("job_type"), "")),
+                "is_remote": bool(clean_val(row.get("is_remote"), False)),
                 "salary": salary,
                 "description": desc
             }

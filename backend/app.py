@@ -120,29 +120,39 @@ def search_jobs(req: SearchRequest):
     if resume_text:
         try:
             matcher = JobMatcher()
-            # Calculate match metrics
+            # Prepare jobs with unique IDs first
+            jobs_to_analyze = []
             for job in raw_jobs:
                 job_id = str(uuid.uuid4())
                 job["id"] = job_id
-                
-                # Fetch match analysis from LLM
-                analysis = matcher.analyze_match(
-                    resume_text=resume_text,
-                    job_title=job["title"],
-                    job_desc=job["description"]
-                )
-                
-                # Merge analysis into job item
-                job.update({
-                    "match_score": analysis.get("match_score", 50),
-                    "match_summary": analysis.get("summary", ""),
-                    "matched_keywords": analysis.get("matched_keywords", []),
-                    "missing_keywords": analysis.get("missing_keywords", []),
-                    "strengths": analysis.get("strengths", []),
-                    "weaknesses": analysis.get("weaknesses", [])
-                })
-                
                 SESSION_DATA["scraped_jobs"][job_id] = job
+                jobs_to_analyze.append(job)
+                
+            # Perform batch analysis (1 API call instead of 15!)
+            batch_results = matcher.analyze_matches_batch(resume_text, jobs_to_analyze)
+            
+            for job in jobs_to_analyze:
+                job_id = job["id"]
+                analysis = batch_results.get(job_id)
+                if analysis:
+                    job.update({
+                        "match_score": analysis.get("match_score", 50),
+                        "match_summary": analysis.get("summary", ""),
+                        "matched_keywords": analysis.get("matched_keywords", []),
+                        "missing_keywords": analysis.get("missing_keywords", []),
+                        "strengths": analysis.get("strengths", []),
+                        "weaknesses": analysis.get("weaknesses", [])
+                    })
+                else:
+                    # Fallback defaults if Gemini did not return a match for this job ID
+                    job.update({
+                        "match_score": 0,
+                        "match_summary": "Skipped score computation due to API limit or parsing error.",
+                        "matched_keywords": [],
+                        "missing_keywords": [],
+                        "strengths": [],
+                        "weaknesses": ["No response from analysis server"]
+                    })
                 processed_jobs.append(job)
                 
             # Sort by match score descending
