@@ -12,7 +12,7 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('Python Backend Developer');
   const [location, setLocation] = useState('Remote');
   const [resultsWanted, setResultsWanted] = useState(15);
-  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt']);
+  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt', 'gemini_search']);
   const [jobType, setJobType] = useState('any'); // 'any', 'fulltime', 'contract'
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
@@ -35,6 +35,13 @@ export default function App() {
   // Drag and drop states
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
+  
+  // WebSocket progress state trackers
+  const [searchProgress, setSearchProgress] = useState({});
+  const [scrapedCounts, setScrapedCounts] = useState({});
+  const [scrapedCount, setScrapedCount] = useState(0);
+  const [loaderMessage, setLoaderMessage] = useState('');
+  const wsStateRef = useRef({ lastCount: 0, prevSite: null });
 
   // Check health status on load to retrieve existing session
   useEffect(() => {
@@ -140,7 +147,7 @@ export default function App() {
   // Search Jobs Logic
   const handleSearchJobs = (e) => {
     e.preventDefault();
-    if (!searchTerm.strip && !searchTerm) {
+    if (!searchTerm || !searchTerm.trim()) {
       setError('Search keyword is required.');
       return;
     }
@@ -149,11 +156,35 @@ export default function App() {
     setLoading(true);
     setJobs([]);
     setHasSearched(true);
+
+    // Initialize progress tracking states
+    const initialProgress = {};
+    selectedSites.forEach(s => {
+      initialProgress[s] = 'pending';
+    });
+    if (resume) {
+      initialProgress['gemini'] = 'pending';
+    }
+    setSearchProgress(initialProgress);
     
-    fetch(`${API_BASE}/search-jobs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const initialCounts = {};
+    selectedSites.forEach(s => {
+      initialCounts[s] = 0;
+    });
+    setScrapedCounts(initialCounts);
+    setScrapedCount(0);
+    setLoaderMessage('Connecting to search gateway...');
+
+    // Reset tracking state ref
+    wsStateRef.current = { lastCount: 0, prevSite: null };
+
+    // Establish WebSocket connection to backend
+    const wsUrl = API_BASE.replace(/^http/, 'ws') + '/search-jobs-ws';
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      setLoaderMessage('Connection established. Starting aggregator...');
+      socket.send(JSON.stringify({
         search_term: searchTerm,
         location: location,
         results_wanted: resultsWanted,
@@ -162,21 +193,89 @@ export default function App() {
         min_salary: minSalary ? parseInt(minSalary) : null,
         max_salary: maxSalary ? parseInt(maxSalary) : null,
         hours_old: hoursOld ? parseInt(hoursOld) : null
-      })
-    })
-      .then(res => {
-        if (!res.ok) throw new Error("Search request failed.");
-        return res.json();
-      })
-      .then(data => {
-        setJobs(data.jobs || []);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setError('Failed to search and rank job postings. Check backend server logs.');
-        setLoading(false);
-      });
+      }));
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'progress') {
+          const currentSite = data.current_site;
+          const currentJobsFound = data.jobs_found;
+          
+          setLoaderMessage(data.message);
+          setScrapedCount(currentJobsFound);
+          
+          setSearchProgress(prev => {
+            const updated = { ...prev };
+            const state = wsStateRef.current;
+            if (state.prevSite) {
+              updated[state.prevSite] = 'completed';
+            }
+            updated[currentSite] = 'scraping';
+            return updated;
+          });
+          
+          const state = wsStateRef.current;
+          if (state.prevSite) {
+            const diff = currentJobsFound - state.lastCount;
+            setScrapedCounts(prev => ({
+              ...prev,
+              [state.prevSite]: diff > 0 ? diff : 0
+            }));
+          }
+          
+          // Update tracking state ref
+          wsStateRef.current = {
+            lastCount: currentJobsFound,
+            prevSite: currentSite
+          };
+        } else if (data.type === 'results') {
+          // Finalize all remaining states
+          const state = wsStateRef.current;
+          setSearchProgress(prev => {
+            const updated = { ...prev };
+            if (state.prevSite) {
+              updated[state.prevSite] = 'completed';
+            }
+            if (resume) {
+              updated['gemini'] = 'completed';
+            }
+            return updated;
+          });
+
+          // Calculate final counts for last platform if appropriate
+          if (state.prevSite && state.prevSite !== 'gemini') {
+            const totalJobs = data.jobs ? data.jobs.length : 0;
+            const diff = totalJobs - state.lastCount;
+            setScrapedCounts(prev => ({
+              ...prev,
+              [state.prevSite]: diff > 0 ? diff : 0
+            }));
+          }
+
+          setJobs(data.jobs || []);
+          setLoading(false);
+          socket.close();
+        } else if (data.type === 'error') {
+          setError(data.message);
+          setLoading(false);
+          socket.close();
+        }
+      } catch (err) {
+        console.error("Failed to parse WS message:", err);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.error("WebSocket connection error:", err);
+      setError("WebSocket connection failed. Please ensure the backend server is running.");
+      setLoading(false);
+    };
+
+    socket.onclose = () => {
+      setLoading(false);
+    };
   };
 
   // Toggle Job Description Collapse
@@ -217,6 +316,8 @@ export default function App() {
         setShowModal(false);
         setTailorLoading(false);
       });
+  };
+
   // Download Tailored PDF Action
   const handleDownloadPdf = (jobId) => {
     window.open(`${API_BASE}/download-tailored-pdf?job_id=${jobId}`, '_blank');
@@ -404,7 +505,7 @@ export default function App() {
               <div className="form-group">
                 <label className="form-label">Preferred Platforms</label>
                 <div className="sites-checkbox-grid">
-                  {['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt'].map(site => (
+                  {['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt', 'gemini_search'].map(site => (
                     <div 
                       key={site} 
                       className={`checkbox-card ${selectedSites.includes(site) ? 'selected' : ''}`}
@@ -432,8 +533,71 @@ export default function App() {
         <main className="content-area">
           {loading && jobs.length === 0 && (
             <div className="loader-container">
-              <div className="spinner" />
-              <p className="loader-text">Scraping job listings and computing AI match scores...</p>
+              {Object.keys(searchProgress).length > 0 ? (
+                <div className="search-progress-dashboard" style={{ width: '100%' }}>
+                  <div className="loader-header">
+                    <div className="spinner" />
+                    <div>
+                      <h3 className="loader-title">Aggregating Job Market Listings</h3>
+                      <p className="loader-subtitle">{loaderMessage || 'Establishing connection...'}</p>
+                    </div>
+                  </div>
+
+                  <div className="progress-summary">
+                    <div className="progress-stat">
+                      <span className="stat-value">{scrapedCount}</span>
+                      <span className="stat-label">Jobs Discovered</span>
+                    </div>
+                    <div className="progress-divider" />
+                    <div className="progress-stat">
+                      <span className="stat-value">
+                        {selectedSites.filter(s => searchProgress[s] === 'completed' || searchProgress[s] === 'failed').length} / {selectedSites.length}
+                      </span>
+                      <span className="stat-label">Platforms Queried</span>
+                    </div>
+                  </div>
+
+                  <div className="platforms-progress-list">
+                    {selectedSites.map(site => {
+                      const status = searchProgress[site] || 'pending';
+                      const count = scrapedCounts[site] || 0;
+                      return (
+                        <div key={site} className={`platform-progress-item ${status}`}>
+                          <div className="platform-info">
+                            <span className={`platform-indicator-dot ${status}`} />
+                            <span className="platform-name">{site.replace('_', ' ')}</span>
+                          </div>
+                          <span className="platform-status-text">
+                            {status === 'pending' && 'Pending'}
+                            {status === 'scraping' && 'Scraping...'}
+                            {status === 'completed' && `${count} jobs`}
+                            {status === 'failed' && 'Failed'}
+                          </span>
+                        </div>
+                      );
+                    })}
+
+                    {resume && (
+                      <div className={`platform-progress-item ${searchProgress['gemini'] || 'pending'}`}>
+                        <div className="platform-info">
+                          <span className={`platform-indicator-dot ${searchProgress['gemini'] || 'pending'}`} />
+                          <span className="platform-name">Gemini Fit Ranking</span>
+                        </div>
+                        <span className="platform-status-text">
+                          {(searchProgress['gemini'] || 'pending') === 'pending' && 'Pending'}
+                          {searchProgress['gemini'] === 'scraping' && 'Analyzing...'}
+                          {searchProgress['gemini'] === 'completed' && 'Completed'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="spinner" />
+                  <p className="loader-text">Analyzing resume structure and visual styling...</p>
+                </>
+              )}
             </div>
           )}
 

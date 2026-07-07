@@ -101,6 +101,109 @@ def run_job_search(
         logger.error(f"Error during job scraping: {str(e)}", exc_info=True)
         return []
 
+def run_gemini_google_search(search_term: str, location: str, results_wanted: int = 15) -> List[Dict[str, Any]]:
+    """
+    Uses Gemini 2.5 Flash with Google Search Grounding to search for current job openings.
+    """
+    import os
+    import json
+    import re
+    import uuid
+    from google import genai
+    from google.genai import types
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GEMINI_API_KEY not found. Cannot run Gemini Google Search.")
+        return []
+        
+    client = genai.Client(api_key=api_key)
+    
+    # We formulate a specific search query for the model
+    query = f"current job openings for '{search_term}' in '{location}' posted recently"
+    
+    prompt = f"""
+You are an expert recruitment assistant. Use the Google Search tool to find current, active job openings for:
+Role: {search_term}
+Location: {location}
+
+Search Google for job listings. Extract the following details for each job listing:
+- title: The job title (e.g., "Python Backend Engineer").
+- company: The hiring company (e.g., "TechCorp").
+- location: The job location (e.g., "Austin, TX" or "Remote").
+- job_url: The actual URL link to the job posting or application page.
+- salary: Salary information if available (or empty string).
+- description: A brief summary of the role, key responsibilities, and requirements.
+- date_posted: Date/time posted (or empty string).
+- job_type: Job type (e.g., "Full-time", "Contract", "Part-time", "Internship" or "Unknown").
+- is_remote: Boolean (true if the job is remote, false otherwise).
+- site: The source platform name (e.g., "LinkedIn", "Indeed", "Company Website").
+
+Return the list of job listings STRICTLY as a JSON object with a single key "jobs":
+{{
+  "jobs": [
+    {{
+      "title": "...",
+      "company": "...",
+      "location": "...",
+      "job_url": "...",
+      "salary": "...",
+      "description": "...",
+      "date_posted": "...",
+      "job_type": "...",
+      "is_remote": true,
+      "site": "..."
+    }}
+  ]
+}}
+Do NOT output any markdown code blocks (like ```json). Just the raw JSON object.
+"""
+
+    try:
+        logger.info(f"Running Gemini Google Search Grounding for query: {query}")
+        search_tool = types.Tool(google_search=types.GoogleSearch())
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[search_tool],
+                response_mime_type="application/json"
+            )
+        )
+        
+        raw_text = response.text.strip()
+        
+        # Clean up any potential markdown formatting
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r'^```[a-zA-Z]*\n', '', raw_text)
+            raw_text = re.sub(r'\n```$', '', raw_text)
+            raw_text = raw_text.strip()
+            
+        data = json.loads(raw_text)
+        jobs_list = data.get("jobs", [])
+        
+        normalized = []
+        for job in jobs_list[:results_wanted]:
+            normalized.append({
+                "id": str(uuid.uuid4()) if "id" not in job else job["id"],
+                "site": str(job.get("site", "Gemini Search")),
+                "job_url": str(job.get("job_url", "")),
+                "title": str(job.get("title", "No Title")),
+                "company": str(job.get("company", "Unknown Company")),
+                "location": str(job.get("location", location)),
+                "date_posted": str(job.get("date_posted", "")),
+                "job_type": str(job.get("job_type", "")),
+                "is_remote": bool(job.get("is_remote", False)),
+                "salary": str(job.get("salary", "")),
+                "description": str(job.get("description", ""))
+            })
+        logger.info(f"Gemini Google Search discovered {len(normalized)} jobs.")
+        return normalized
+        
+    except Exception as e:
+        logger.error(f"Error running Gemini Google Search: {str(e)}", exc_info=True)
+        return []
+
 if __name__ == "__main__":
     # Quick standalone test
     results = run_job_search("Python Software Engineer", "Austin, TX", results_wanted=3, site_names=["linkedin"])
