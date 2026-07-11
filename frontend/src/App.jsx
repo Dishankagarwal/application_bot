@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_BASE = 'https://job-scraping-bot-backend.onrender.com';
+const API_BASE = 'https://job-scraping-bot-backend.onrender.com/api';
 
 export default function App() {
   // Session states
