@@ -41,6 +41,9 @@ def run_job_search(
             "country_indeed": 'USA'  # Default country context
         }
         
+        if "linkedin" in site_names:
+            scrape_kwargs["linkedin_fetch_description"] = True
+        
         if job_type:
             scrape_kwargs["job_type"] = job_type
         if min_amount is not None:
@@ -95,7 +98,7 @@ def run_job_search(
             }
             normalized_jobs.append(job_item)
             
-        return normalized_jobs
+        return enrich_job_descriptions(normalized_jobs)
 
     except Exception as e:
         logger.error(f"Error during job scraping: {str(e)}", exc_info=True)
@@ -198,11 +201,126 @@ Do NOT output any markdown code blocks (like ```json). Just the raw JSON object.
                 "description": str(job.get("description", ""))
             })
         logger.info(f"Gemini Google Search discovered {len(normalized)} jobs.")
-        return normalized
+        return enrich_job_descriptions(normalized)
         
     except Exception as e:
         logger.error(f"Error running Gemini Google Search: {str(e)}", exc_info=True)
         return []
+
+def fetch_external_job_description(url: str) -> str:
+    """
+    Crawls the given URL directly to fetch and parse the page content,
+    extracting the clean job description text. Filters out navigation, footer,
+    and script tags.
+    """
+    if not url or not url.startswith("http"):
+        return ""
+    
+    parsed_url = url.lower()
+    # Avoid scraping LinkedIn and Indeed directly as they block standard requests
+    if "linkedin.com" in parsed_url or "indeed.com" in parsed_url:
+        return ""
+        
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    }
+    
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        
+        logger.info(f"Enriching job description by crawling external URL: {url}")
+        response = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
+        if response.status_code != 200:
+            logger.warning(f"Failed to fetch external URL {url}: Status code {response.status_code}")
+            return ""
+            
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Remove non-content elements
+        for element in soup(["script", "style", "nav", "footer", "header", "noscript", "aside", "iframe"]):
+            element.decompose()
+            
+        # Target common job description containers
+        possible_containers = []
+        for tag in ["div", "section", "article", "main"]:
+            for item in soup.find_all(tag):
+                element_id = (item.get("id") or "").lower()
+                classes = " ".join(item.get("class") or []).lower()
+                auto_id = (item.get("data-automation-id") or "").lower()
+                
+                if (
+                    "jobdescription" in auto_id or
+                    "description" in element_id or "description" in classes or
+                    "job-details" in element_id or "job-details" in classes or
+                    "job-posting" in element_id or "job-posting" in classes or
+                    "posting-content" in element_id or "posting-content" in classes or
+                    "career" in element_id or "career" in classes
+                ):
+                    possible_containers.append((item, len(item.get_text())))
+                    
+        # Filter containers having text length in valid range
+        valid_containers = [c for c in possible_containers if 300 <= c[1] <= 15000]
+        if valid_containers:
+            # Pick largest matching container text
+            best_container = max(valid_containers, key=lambda x: x[1])[0]
+            text = best_container.get_text(separator="\n")
+        else:
+            # Fallback to body text or entire text
+            body = soup.find("body")
+            if body:
+                text = body.get_text(separator="\n")
+            else:
+                text = soup.get_text(separator="\n")
+                
+        # Clean lines
+        lines = [line.strip() for line in text.splitlines()]
+        cleaned_lines = [line for line in lines if line]
+        
+        final_text = "\n".join(cleaned_lines)
+        if len(final_text) > 8000:
+            final_text = final_text[:8000] + "\n[Description truncated...]"
+        return final_text
+        
+    except Exception as e:
+        logger.error(f"Error fetching external job description from {url}: {str(e)}")
+        return ""
+
+def enrich_job_descriptions(jobs: List[Dict[str, Any]], max_workers: int = 5) -> List[Dict[str, Any]]:
+    """
+    Enriches job listings concurrently using a ThreadPoolExecutor to crawl
+    external job urls for missing or extremely short description texts.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    
+    jobs_to_enrich = []
+    for job in jobs:
+        desc = job.get("description") or ""
+        url = job.get("job_url") or ""
+        # Check if description is short and url is valid
+        if len(desc) < 350 and url.startswith("http"):
+            parsed_url = url.lower()
+            if "linkedin.com" not in parsed_url and "indeed.com" not in parsed_url:
+                jobs_to_enrich.append(job)
+                
+    if not jobs_to_enrich:
+        return jobs
+        
+    logger.info(f"Found {len(jobs_to_enrich)} jobs needing description enrichment. Enriching concurrently...")
+    
+    def worker(job_dict):
+        url = job_dict["job_url"]
+        fetched_desc = fetch_external_job_description(url)
+        if fetched_desc and len(fetched_desc) > len(job_dict.get("description") or ""):
+            job_dict["description"] = fetched_desc
+            logger.info(f"Successfully enriched description for '{job_dict.get('title')}' from {url} (Length: {len(fetched_desc)})")
+            
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor.map(worker, jobs_to_enrich)
+        
+    return jobs
 
 if __name__ == "__main__":
     # Quick standalone test

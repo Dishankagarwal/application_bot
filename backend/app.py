@@ -247,6 +247,10 @@ def search_jobs(req: SearchRequest):
                 SESSION_DATA["scraped_jobs"][job_id] = job
                 jobs_to_analyze.append(job)
                 
+            # Log description lengths for visibility
+            for j in jobs_to_analyze:
+                logger.info(f"Job title: '{j.get('title')}', Company: '{j.get('company')}', Description length: {len(j.get('description') or '')}")
+
             # Perform batch analysis (1 API call instead of 15!)
             batch_results = matcher.analyze_matches_batch(resume_text, jobs_to_analyze)
             
@@ -410,6 +414,10 @@ async def search_jobs_websocket(websocket: WebSocket):
                     SESSION_DATA["scraped_jobs"][job_id] = job
                     jobs_to_analyze.append(job)
                 
+                # Log description lengths for visibility
+                for j in jobs_to_analyze:
+                    logger.info(f"Job title: '{j.get('title')}', Company: '{j.get('company')}', Description length: {len(j.get('description') or '')}")
+
                 # Perform batch analysis in background thread
                 batch_results = await asyncio.to_thread(
                     matcher.analyze_matches_batch,

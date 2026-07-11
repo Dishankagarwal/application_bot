@@ -162,10 +162,10 @@ Description:
 === Output Instructions ===
 Compare the candidate's skills, experience, and background against the job description.
 Compute:
-1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job.
-2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit.
-3. `matched_keywords`: Key technical skills/keywords that exist in both the job description and the resume.
-4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume.
+1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job. If the job description is extremely short, missing, or generic, evaluate based on the job title and general resume relevance, and assign a neutral score (e.g., 50-65) rather than penalizing the candidate heavily.
+2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit. If description details are sparse, explicitly state: "Limited description details available for detailed mapping."
+3. `matched_keywords`: Key technical skills/keywords that exist in both the job description (or title) and the resume.
+4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume. Leave empty if description is sparse.
 5. `strengths`: Bullet points listing the candidate's main strengths matching the job.
 6. `weaknesses`: Bullet points listing gaps or weaknesses relative to the job requirements.
 
@@ -258,10 +258,10 @@ You are an expert recruiter and resume reviewer. Compare the Candidate Resume te
 
 === Output Instructions ===
 Compare the candidate's resume against each job opening. For each job, compute:
-1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job.
-2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit.
-3. `matched_keywords`: Key technical skills/keywords that exist in both the job description and the resume.
-4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume.
+1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job. If the job description is extremely short, missing, or generic, evaluate based on the job title and general resume relevance, and assign a neutral score (e.g., 50-65) rather than penalizing the candidate heavily.
+2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit. If description details are sparse, explicitly state: "Limited description details available for detailed mapping."
+3. `matched_keywords`: Key technical skills/keywords that exist in both the job description (or title) and the resume.
+4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume. Leave empty if description is sparse.
 5. `strengths`: Bullet points listing the candidate's main strengths matching the job.
 6. `weaknesses`: Bullet points listing gaps or weaknesses relative to the job requirements.
 
