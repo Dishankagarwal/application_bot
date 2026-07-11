@@ -9,3 +9,4 @@ python-multipart
 PyMuPDF
 xhtml2pdf
 markdown
+google-genai
