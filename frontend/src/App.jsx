@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = 'https://job-scraping-bot-backend.onrender.com';
 
 export default function App() {
   // Session states
   const [resume, setResume] = useState(null); // { filename, charCount }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   // Search parameters state
   const [searchTerm, setSearchTerm] = useState('Python Backend Developer');
   const [location, setLocation] = useState('Remote');
@@ -17,25 +17,25 @@ export default function App() {
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
   const [hoursOld, setHoursOld] = useState(''); // '', '168' (7 days), '720' (1 month)
-  
+
   // Scraped Jobs state
   const [jobs, setJobs] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
-  
+
   // Collapsed job descriptions state (map of jobId -> boolean)
   const [expandedJobs, setExpandedJobs] = useState({});
-  
+
   // Tailoring Modal states
   const [selectedJob, setSelectedJob] = useState(null);
   const [tailorLoading, setTailorLoading] = useState(false);
   const [tailoredResume, setTailoredResume] = useState(null); // { markdown, changes: [...] }
   const [showModal, setShowModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
-  
+
   // Drag and drop states
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
-  
+
   // WebSocket progress state trackers
   const [searchProgress, setSearchProgress] = useState({});
   const [scrapedCounts, setScrapedCounts] = useState({});
@@ -96,13 +96,13 @@ export default function App() {
       setError('Please upload a valid PDF resume file.');
       return;
     }
-    
+
     setError('');
     setLoading(true);
-    
+
     const formData = new FormData();
     formData.append('file', file);
-    
+
     fetch(`${API_BASE}/upload-resume`, {
       method: 'POST',
       body: formData
@@ -151,7 +151,7 @@ export default function App() {
       setError('Search keyword is required.');
       return;
     }
-    
+
     setError('');
     setLoading(true);
     setJobs([]);
@@ -166,7 +166,7 @@ export default function App() {
       initialProgress['gemini'] = 'pending';
     }
     setSearchProgress(initialProgress);
-    
+
     const initialCounts = {};
     selectedSites.forEach(s => {
       initialCounts[s] = 0;
@@ -202,10 +202,10 @@ export default function App() {
         if (data.type === 'progress') {
           const currentSite = data.current_site;
           const currentJobsFound = data.jobs_found;
-          
+
           setLoaderMessage(data.message);
           setScrapedCount(currentJobsFound);
-          
+
           setSearchProgress(prev => {
             const updated = { ...prev };
             const state = wsStateRef.current;
@@ -215,7 +215,7 @@ export default function App() {
             updated[currentSite] = 'scraping';
             return updated;
           });
-          
+
           const state = wsStateRef.current;
           if (state.prevSite) {
             const diff = currentJobsFound - state.lastCount;
@@ -224,7 +224,7 @@ export default function App() {
               [state.prevSite]: diff > 0 ? diff : 0
             }));
           }
-          
+
           // Update tracking state ref
           wsStateRef.current = {
             lastCount: currentJobsFound,
@@ -293,7 +293,7 @@ export default function App() {
     setShowModal(true);
     setTailoredResume(null);
     setCopySuccess(false);
-    
+
     fetch(`${API_BASE}/tailor-resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -352,7 +352,7 @@ export default function App() {
           </h1>
           <p className="logo-subtitle">AI-Powered Job Matcher & Resume Customizer (Human-in-the-Loop)</p>
         </div>
-        
+
         <div className="resume-status-widget">
           <span className={`status-indicator ${resume ? 'success' : 'warning'}`} />
           <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
@@ -377,9 +377,9 @@ export default function App() {
             <h3 className="panel-title">
               <span>📄</span> Resume Upload
             </h3>
-            
+
             {!resume ? (
-              <div 
+              <div
                 className={`file-upload-zone ${dragOver ? 'drag-over' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -390,8 +390,8 @@ export default function App() {
                 <p className="file-upload-text">
                   Drag & Drop PDF or <span>Browse Files</span>
                 </p>
-                <input 
-                  type="file" 
+                <input
+                  type="file"
                   ref={fileInputRef}
                   onChange={handleFileSelect}
                   className="file-input"
@@ -421,10 +421,10 @@ export default function App() {
             <form onSubmit={handleSearchJobs}>
               <div className="form-group">
                 <label className="form-label">Job Title / Keyword</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={searchTerm} 
+                <input
+                  type="text"
+                  className="form-input"
+                  value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="e.g. React Frontend Developer"
                   required
@@ -433,10 +433,10 @@ export default function App() {
 
               <div className="form-group">
                 <label className="form-label">Location</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={location} 
+                <input
+                  type="text"
+                  className="form-input"
+                  value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="e.g. Remote or Austin, TX"
                 />
@@ -444,21 +444,21 @@ export default function App() {
 
               <div className="form-group">
                 <label className="form-label">Results Limit</label>
-                <input 
-                  type="number" 
-                  className="form-input" 
-                  min="1" 
+                <input
+                  type="number"
+                  className="form-input"
+                  min="1"
                   max="50"
-                  value={resultsWanted} 
+                  value={resultsWanted}
                   onChange={(e) => setResultsWanted(parseInt(e.target.value) || 10)}
                 />
               </div>
 
               <div className="form-group">
                 <label className="form-label">Job Type</label>
-                <select 
-                  className="form-input" 
-                  value={jobType} 
+                <select
+                  className="form-input"
+                  value={jobType}
                   onChange={(e) => setJobType(e.target.value)}
                 >
                   <option value="any">Any Type</option>
@@ -470,18 +470,18 @@ export default function App() {
               <div className="form-group">
                 <label className="form-label">Package Range (Annual USD)</label>
                 <div className="salary-inputs-row" style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    value={minSalary} 
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={minSalary}
                     onChange={(e) => setMinSalary(e.target.value)}
                     placeholder="Min"
                     min="0"
                   />
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    value={maxSalary} 
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={maxSalary}
                     onChange={(e) => setMaxSalary(e.target.value)}
                     placeholder="Max"
                     min="0"
@@ -491,9 +491,9 @@ export default function App() {
 
               <div className="form-group">
                 <label className="form-label">Date Posted</label>
-                <select 
-                  className="form-input" 
-                  value={hoursOld} 
+                <select
+                  className="form-input"
+                  value={hoursOld}
                   onChange={(e) => setHoursOld(e.target.value)}
                 >
                   <option value="">Anytime</option>
@@ -506,15 +506,15 @@ export default function App() {
                 <label className="form-label">Preferred Platforms</label>
                 <div className="sites-checkbox-grid">
                   {['linkedin', 'indeed', 'glassdoor', 'zip_recruiter', 'google', 'naukri', 'bayt', 'gemini_search'].map(site => (
-                    <div 
-                      key={site} 
+                    <div
+                      key={site}
                       className={`checkbox-card ${selectedSites.includes(site) ? 'selected' : ''}`}
                       onClick={() => handleToggleSite(site)}
                     >
-                      <input 
-                        type="checkbox" 
-                        checked={selectedSites.includes(site)} 
-                        onChange={() => {}} // Handle click in card parent
+                      <input
+                        type="checkbox"
+                        checked={selectedSites.includes(site)}
+                        onChange={() => { }} // Handle click in card parent
                       />
                       <span className="checkbox-label">{site.replace('_', ' ')}</span>
                     </div>
@@ -702,7 +702,7 @@ export default function App() {
                           <button className="desc-toggle-btn" onClick={() => toggleJobDesc(job.id)}>
                             {isExpanded ? 'Collapse description ▴' : 'Expand full description ▾'}
                           </button>
-                          
+
                           {isExpanded ? (
                             <div className="job-desc-preview">
                               {job.description}
@@ -717,8 +717,8 @@ export default function App() {
 
                       {/* Action buttons */}
                       <div className="card-actions-row">
-                        <button 
-                          className="btn-secondary" 
+                        <button
+                          className="btn-secondary"
                           onClick={() => handleTailorResume(job)}
                           disabled={!resume}
                           title={!resume ? "Please upload a resume first" : "Optimize your resume details for this job posting"}
@@ -726,20 +726,20 @@ export default function App() {
                           ✨ Tailor Resume
                         </button>
 
-                        <button 
-                          className="btn-secondary" 
+                        <button
+                          className="btn-secondary"
                           onClick={() => handleDownloadPdf(job.id)}
                           disabled={!resume}
                           title={!resume ? "Please upload a resume first" : "Download tailored PDF resume"}
                         >
                           📄 Download PDF
                         </button>
-                        
+
                         {job.job_url && (
-                          <a 
-                            href={job.job_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
+                          <a
+                            href={job.job_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="btn-accent-link"
                           >
                             🔗 View Listing & Apply Manually
@@ -792,7 +792,7 @@ export default function App() {
                         <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Resume tailored with custom vocabulary adjustments.</p>
                       )}
                     </div>
-                    
+
                     <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
                       ⚠️ <b>Notice:</b> The AI rephrases summary and experience bullet points to focus on requested skills. Review the text below to make sure it aligns with your true experience before copy/pasting.
                     </p>
@@ -817,16 +817,16 @@ export default function App() {
               <button className="btn-secondary" onClick={() => setShowModal(false)}>
                 Close
               </button>
-              <button 
-                className="btn-secondary" 
+              <button
+                className="btn-secondary"
                 onClick={() => handleDownloadPdf(selectedJob.id)}
                 disabled={tailorLoading || !tailoredResume}
                 style={{ width: 'auto', padding: '0.75rem 1.5rem' }}
               >
                 📥 Download PDF
               </button>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 onClick={copyToClipboard}
                 disabled={tailorLoading || !tailoredResume}
                 style={{ width: 'auto', padding: '0.75rem 1.5rem' }}
