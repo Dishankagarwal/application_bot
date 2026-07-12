@@ -11,9 +11,10 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from scraper import run_job_search, run_gemini_google_search
+from scraper import run_job_search, run_gemini_google_search, deduplicate_jobs
 from matcher import JobMatcher
 from tailor import ResumeTailor
+from interview_prep import InterviewPrepGenerator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -226,6 +227,9 @@ def search_jobs(req: SearchRequest):
         location=req.location
     )
     
+    # Deduplicate cross-platform listings
+    raw_jobs = deduplicate_jobs(raw_jobs)
+    
     if not raw_jobs:
         return {"success": True, "jobs": []}
         
@@ -258,8 +262,19 @@ def search_jobs(req: SearchRequest):
                 job_id = job["id"]
                 analysis = batch_results.get(job_id)
                 if analysis:
+                    # Compute ATS keyword hit rate locally
+                    ats_data = matcher.compute_ats_keyword_hit_rate(
+                        resume_text,
+                        analysis.get("matched_keywords", []),
+                        analysis.get("missing_keywords", [])
+                    )
                     job.update({
                         "match_score": analysis.get("match_score", 50),
+                        "skills_score": analysis.get("skills_score", 50),
+                        "experience_score": analysis.get("experience_score", 50),
+                        "education_score": analysis.get("education_score", 50),
+                        "overall_score": analysis.get("overall_score", 50),
+                        "ats_keyword_hit_rate": ats_data.get("ats_keyword_hit_rate", 0),
                         "match_summary": analysis.get("summary", ""),
                         "matched_keywords": analysis.get("matched_keywords", []),
                         "missing_keywords": analysis.get("missing_keywords", []),
@@ -270,6 +285,11 @@ def search_jobs(req: SearchRequest):
                     # Fallback defaults if Gemini did not return a match for this job ID
                     job.update({
                         "match_score": 0,
+                        "skills_score": 0,
+                        "experience_score": 0,
+                        "education_score": 0,
+                        "overall_score": 0,
+                        "ats_keyword_hit_rate": 0,
                         "match_summary": "Skipped score computation due to API limit or parsing error.",
                         "matched_keywords": [],
                         "missing_keywords": [],
@@ -379,6 +399,9 @@ async def search_jobs_websocket(websocket: WebSocket):
             location=location
         )
 
+        # Deduplicate cross-platform listings
+        raw_jobs = deduplicate_jobs(raw_jobs)
+
         if not raw_jobs:
             await websocket.send_json({
                 "type": "results",
@@ -429,8 +452,19 @@ async def search_jobs_websocket(websocket: WebSocket):
                     job_id = job["id"]
                     analysis = batch_results.get(job_id)
                     if analysis:
+                        # Compute ATS keyword hit rate locally
+                        ats_data = matcher.compute_ats_keyword_hit_rate(
+                            resume_text,
+                            analysis.get("matched_keywords", []),
+                            analysis.get("missing_keywords", [])
+                        )
                         job.update({
                             "match_score": analysis.get("match_score", 50),
+                            "skills_score": analysis.get("skills_score", 50),
+                            "experience_score": analysis.get("experience_score", 50),
+                            "education_score": analysis.get("education_score", 50),
+                            "overall_score": analysis.get("overall_score", 50),
+                            "ats_keyword_hit_rate": ats_data.get("ats_keyword_hit_rate", 0),
                             "match_summary": analysis.get("summary", ""),
                             "matched_keywords": analysis.get("matched_keywords", []),
                             "missing_keywords": analysis.get("missing_keywords", []),
@@ -440,6 +474,11 @@ async def search_jobs_websocket(websocket: WebSocket):
                     else:
                         job.update({
                             "match_score": 0,
+                            "skills_score": 0,
+                            "experience_score": 0,
+                            "education_score": 0,
+                            "overall_score": 0,
+                            "ats_keyword_hit_rate": 0,
                             "match_summary": "Skipped score computation due to API limit or parsing error.",
                             "matched_keywords": [],
                             "missing_keywords": [],
@@ -521,9 +560,58 @@ def tailor_resume(req: TailorRequest):
             "tailored_resume_markdown": tailor_result.get("tailored_resume_markdown", ""),
             "changes_made": tailor_result.get("changes_made", [])
         }
-    except Exception as e:
         logger.error(f"Error in tailor endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/generate-cover-letter")
+def generate_cover_letter(req: TailorRequest):
+    """Generates a tailored cover letter for a specific stored job."""
+    job_id = req.job_id
+    job = SESSION_DATA["scraped_jobs"].get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job ID not found or search results expired.")
+        
+    resume_text = SESSION_DATA["resume_text"]
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Please upload a resume before generating a cover letter.")
+        
+    try:
+        tailor = ResumeTailor()
+        return tailor.generate_cover_letter(
+            resume_text=resume_text,
+            job_title=job["title"],
+            job_desc=job["description"],
+            company=job["company"]
+        )
+    except Exception as e:
+        logger.error(f"Error in cover letter endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/interview-prep")
+def generate_interview_prep(req: TailorRequest):
+    """Generates interview questions and approaches for a specific stored job."""
+    job_id = req.job_id
+    job = SESSION_DATA["scraped_jobs"].get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job ID not found or search results expired.")
+        
+    resume_text = SESSION_DATA["resume_text"]
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Please upload a resume before generating interview prep.")
+        
+    try:
+        prep = InterviewPrepGenerator()
+        weaknesses = job.get("weaknesses", [])
+        return prep.generate_interview_questions(
+            resume_text=resume_text,
+            job_title=job["title"],
+            job_desc=job["description"],
+            weaknesses=weaknesses
+        )
+    except Exception as e:
+        logger.error(f"Error in interview prep endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/download-tailored-pdf")
 def download_tailored_pdf(job_id: str):

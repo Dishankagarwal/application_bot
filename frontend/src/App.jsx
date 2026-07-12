@@ -25,12 +25,24 @@ export default function App() {
   // Collapsed job descriptions state (map of jobId -> boolean)
   const [expandedJobs, setExpandedJobs] = useState({});
 
-  // Tailoring Modal states
+  // Modal states
   const [selectedJob, setSelectedJob] = useState(null);
+  
+  // Tailoring Modal states
   const [tailorLoading, setTailorLoading] = useState(false);
   const [tailoredResume, setTailoredResume] = useState(null); // { markdown, changes: [...] }
-  const [showModal, setShowModal] = useState(false);
+  const [showTailorModal, setShowTailorModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // Cover Letter Modal states
+  const [coverLetterLoading, setCoverLetterLoading] = useState(false);
+  const [coverLetter, setCoverLetter] = useState(null); // { text, keyPoints: [] }
+  const [showCoverLetterModal, setShowCoverLetterModal] = useState(false);
+  
+  // Interview Prep Modal states
+  const [interviewPrepLoading, setInterviewPrepLoading] = useState(false);
+  const [interviewPrep, setInterviewPrep] = useState(null); // { questions: [] }
+  const [showInterviewPrepModal, setShowInterviewPrepModal] = useState(false);
 
   // Drag and drop states
   const [dragOver, setDragOver] = useState(false);
@@ -290,7 +302,7 @@ export default function App() {
   const handleTailorResume = (job) => {
     setSelectedJob(job);
     setTailorLoading(true);
-    setShowModal(true);
+    setShowTailorModal(true);
     setTailoredResume(null);
     setCopySuccess(false);
 
@@ -313,8 +325,70 @@ export default function App() {
       .catch(err => {
         console.error(err);
         setError('Failed to customize resume for the target job.');
-        setShowModal(false);
+        setShowTailorModal(false);
         setTailorLoading(false);
+      });
+  };
+
+  // Fetch Cover Letter
+  const handleGenerateCoverLetter = (job) => {
+    setSelectedJob(job);
+    setCoverLetterLoading(true);
+    setShowCoverLetterModal(true);
+    setCoverLetter(null);
+    setCopySuccess(false);
+
+    fetch(`${API_BASE}/generate-cover-letter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: job.id })
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to generate cover letter.");
+        return res.json();
+      })
+      .then(data => {
+        setCoverLetter({
+          text: data.cover_letter_text,
+          keyPoints: data.key_points_highlighted || []
+        });
+        setCoverLetterLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setError('Failed to generate cover letter.');
+        setShowCoverLetterModal(false);
+        setCoverLetterLoading(false);
+      });
+  };
+
+  // Fetch Interview Prep
+  const handleInterviewPrep = (job) => {
+    setSelectedJob(job);
+    setInterviewPrepLoading(true);
+    setShowInterviewPrepModal(true);
+    setInterviewPrep(null);
+
+    fetch(`${API_BASE}/interview-prep`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: job.id })
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to generate interview prep.");
+        return res.json();
+      })
+      .then(data => {
+        setInterviewPrep({
+          questions: data.questions || []
+        });
+        setInterviewPrepLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setError('Failed to generate interview prep.');
+        setShowInterviewPrepModal(false);
+        setInterviewPrepLoading(false);
       });
   };
 
@@ -324,9 +398,9 @@ export default function App() {
   };
 
   // Copy to Clipboard Action
-  const copyToClipboard = () => {
-    if (tailoredResume && tailoredResume.markdown) {
-      navigator.clipboard.writeText(tailoredResume.markdown)
+  const copyToClipboard = (text) => {
+    if (text) {
+      navigator.clipboard.writeText(text)
         .then(() => {
           setCopySuccess(true);
           setTimeout(() => setCopySuccess(false), 2000);
@@ -646,11 +720,36 @@ export default function App() {
 
                         {/* Match Score Display */}
                         {resume ? (
-                          <div className="match-score-container">
-                            <span className={`match-score-value ${getScoreClass(job.match_score)}`}>
-                              {job.match_score}%
-                            </span>
-                            <span className="match-score-label">Fit Score</span>
+                          <div className="match-score-container expanded">
+                            <div className="overall-score">
+                              <span className={`match-score-value ${getScoreClass(job.overall_score || job.match_score)}`}>
+                                {job.overall_score || job.match_score || 0}%
+                              </span>
+                              <span className="match-score-label">Overall Fit</span>
+                            </div>
+                            <div className="sub-scores">
+                              <div className="sub-score-item">
+                                <span className="sub-score-label">Skills</span>
+                                <div className="progress-bar">
+                                  <div className={`progress-fill ${getScoreClass(job.skills_score)}`} style={{ width: `${job.skills_score || 0}%` }}></div>
+                                </div>
+                              </div>
+                              <div className="sub-score-item">
+                                <span className="sub-score-label">Experience</span>
+                                <div className="progress-bar">
+                                  <div className={`progress-fill ${getScoreClass(job.experience_score)}`} style={{ width: `${job.experience_score || 0}%` }}></div>
+                                </div>
+                              </div>
+                              <div className="sub-score-item">
+                                <span className="sub-score-label">Education</span>
+                                <div className="progress-bar">
+                                  <div className={`progress-fill ${getScoreClass(job.education_score)}`} style={{ width: `${job.education_score || 0}%` }}></div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="ats-badge">
+                              ATS Keyword Hit Rate: <strong>{job.ats_keyword_hit_rate || 0}%</strong>
+                            </div>
                           </div>
                         ) : (
                           <div className="match-score-container" style={{ opacity: 0.5 }} title="Upload resume to view score">
@@ -725,14 +824,23 @@ export default function App() {
                         >
                           ✨ Tailor Resume
                         </button>
-
+                        
                         <button
                           className="btn-secondary"
-                          onClick={() => handleDownloadPdf(job.id)}
+                          onClick={() => handleGenerateCoverLetter(job)}
                           disabled={!resume}
-                          title={!resume ? "Please upload a resume first" : "Download tailored PDF resume"}
+                          title={!resume ? "Please upload a resume first" : "Generate a tailored cover letter"}
                         >
-                          📄 Download PDF
+                          📝 Cover Letter
+                        </button>
+                        
+                        <button
+                          className="btn-secondary"
+                          onClick={() => handleInterviewPrep(job)}
+                          disabled={!resume}
+                          title={!resume ? "Please upload a resume first" : "Generate likely interview questions"}
+                        >
+                          🎯 Interview Prep
                         </button>
 
                         {job.job_url && (
@@ -756,7 +864,7 @@ export default function App() {
       </div>
 
       {/* Tailoring Modal */}
-      {showModal && selectedJob && (
+      {showTailorModal && selectedJob && (
         <div className="modal-overlay">
           <div className="modal-content">
             <header className="modal-header">
@@ -764,7 +872,7 @@ export default function App() {
                 <h2>Tailoring Resume</h2>
                 <p>{selectedJob.title} — {selectedJob.company}</p>
               </div>
-              <button className="btn-close" onClick={() => setShowModal(false)}>✕</button>
+              <button className="btn-close" onClick={() => setShowTailorModal(false)}>✕</button>
             </header>
 
             <div className="modal-body">
@@ -814,7 +922,7 @@ export default function App() {
                   ✓ Copied to clipboard!
                 </div>
               )}
-              <button className="btn-secondary" onClick={() => setShowModal(false)}>
+              <button className="btn-secondary" onClick={() => setShowTailorModal(false)}>
                 Close
               </button>
               <button
@@ -827,11 +935,125 @@ export default function App() {
               </button>
               <button
                 className="btn-primary"
-                onClick={copyToClipboard}
+                onClick={() => copyToClipboard(tailoredResume?.markdown)}
                 disabled={tailorLoading || !tailoredResume}
                 style={{ width: 'auto', padding: '0.75rem 1.5rem' }}
               >
                 📋 Copy Optimized Markdown
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* Cover Letter Modal */}
+      {showCoverLetterModal && selectedJob && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <header className="modal-header">
+              <div className="modal-title-area">
+                <h2>Tailored Cover Letter</h2>
+                <p>{selectedJob.title} — {selectedJob.company}</p>
+              </div>
+              <button className="btn-close" onClick={() => setShowCoverLetterModal(false)}>✕</button>
+            </header>
+
+            <div className="modal-body">
+              {coverLetterLoading ? (
+                <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px' }}>
+                  <div className="spinner" />
+                  <p className="loader-text">AI is generating a targeted cover letter...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="modal-sidebar">
+                    <div className="modal-sidebar-card">
+                      <h4>Points Emphasized</h4>
+                      {coverLetter && coverLetter.keyPoints && coverLetter.keyPoints.length > 0 ? (
+                        <div className="changes-list">
+                          {coverLetter.keyPoints.map((item, i) => (
+                            <div key={i} className="change-item">
+                              <div className="change-desc">{item}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Standard professional letter generated.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="resume-preview-container">
+                    <div className="resume-markdown-box">
+                      {coverLetter ? coverLetter.text : 'No cover letter generated.'}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <footer className="modal-footer">
+              {copySuccess && (
+                <div className="copy-badge">
+                  ✓ Copied to clipboard!
+                </div>
+              )}
+              <button className="btn-secondary" onClick={() => setShowCoverLetterModal(false)}>
+                Close
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => copyToClipboard(coverLetter?.text)}
+                disabled={coverLetterLoading || !coverLetter}
+                style={{ width: 'auto', padding: '0.75rem 1.5rem' }}
+              >
+                📋 Copy Cover Letter
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* Interview Prep Modal */}
+      {showInterviewPrepModal && selectedJob && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <header className="modal-header">
+              <div className="modal-title-area">
+                <h2>Interview Prep Guide</h2>
+                <p>{selectedJob.title} — {selectedJob.company}</p>
+              </div>
+              <button className="btn-close" onClick={() => setShowInterviewPrepModal(false)}>✕</button>
+            </header>
+
+            <div className="modal-body" style={{ gridTemplateColumns: '1fr' }}>
+              {interviewPrepLoading ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px' }}>
+                  <div className="spinner" />
+                  <p className="loader-text">AI is preparing interview questions based on your resume and job description...</p>
+                </div>
+              ) : (
+                <div className="interview-questions-list">
+                  {interviewPrep && interviewPrep.questions && interviewPrep.questions.length > 0 ? (
+                    interviewPrep.questions.map((q, idx) => (
+                      <div key={idx} className="interview-question-card">
+                        <div className="question-category-badge">{q.category}</div>
+                        <h4 className="interview-question-text">{q.question}</h4>
+                        <div className="interview-suggested-approach">
+                          <strong>💡 Suggested Approach:</strong> {q.suggested_approach}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p style={{ color: 'var(--color-text-muted)' }}>No interview prep generated.</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <footer className="modal-footer">
+              <button className="btn-secondary" onClick={() => setShowInterviewPrepModal(false)}>
+                Close
               </button>
             </footer>
           </div>

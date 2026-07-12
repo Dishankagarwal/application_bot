@@ -1,4 +1,5 @@
 import math
+import time
 import logging
 import pandas as pd
 from typing import List, Dict, Any
@@ -6,6 +7,9 @@ from jobspy import scrape_jobs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+BASE_BACKOFF_SECONDS = 2
 
 def clean_val(v, default=""):
     if v is None or (isinstance(v, float) and math.isnan(v)) or pd.isna(v):
@@ -55,8 +59,19 @@ def run_job_search(
         if min_amount is not None or max_amount is not None:
             scrape_kwargs["enforce_annual_salary"] = True
 
-        # python-jobspy returns a pandas DataFrame
-        jobs_df = scrape_jobs(**scrape_kwargs)
+        # python-jobspy returns a pandas DataFrame — retry with backoff on transient errors
+        jobs_df = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                jobs_df = scrape_jobs(**scrape_kwargs)
+                break  # Success
+            except Exception as retry_err:
+                wait = BASE_BACKOFF_SECONDS ** attempt
+                logger.warning(f"Scrape attempt {attempt}/{MAX_RETRIES} failed for {site_names}: {retry_err}. Retrying in {wait}s...")
+                if attempt == MAX_RETRIES:
+                    logger.error(f"All {MAX_RETRIES} scrape attempts exhausted for {site_names}.")
+                    raise
+                time.sleep(wait)
         
         if jobs_df is None or jobs_df.empty:
             logger.info("No jobs found matching the query.")
@@ -103,6 +118,57 @@ def run_job_search(
     except Exception as e:
         logger.error(f"Error during job scraping: {str(e)}", exc_info=True)
         return []
+
+
+def deduplicate_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deduplicates jobs by normalizing (company, title, location) into a key.
+    When duplicates are found, keeps the entry with the longest description
+    and merges source platform names.
+    """
+    import re
+    seen = {}  # key -> job dict
+    
+    def normalize(s: str) -> str:
+        s = s.lower().strip()
+        s = re.sub(r'[^a-z0-9\s]', '', s)
+        s = re.sub(r'\s+', ' ', s)
+        return s
+    
+    for job in jobs:
+        key = (
+            normalize(job.get("company", "")),
+            normalize(job.get("title", "")),
+            normalize(job.get("location", ""))
+        )
+        
+        if key in seen:
+            existing = seen[key]
+            # Keep the one with longer description
+            existing_desc_len = len(existing.get("description") or "")
+            new_desc_len = len(job.get("description") or "")
+            
+            # Merge source platform names
+            existing_site = existing.get("site", "")
+            new_site = job.get("site", "")
+            if new_site and new_site not in existing_site:
+                existing["site"] = f"{existing_site}, {new_site}"
+            
+            if new_desc_len > existing_desc_len:
+                # Replace with better description but keep merged site
+                merged_site = existing["site"]
+                seen[key] = job
+                seen[key]["site"] = merged_site
+            
+            logger.info(f"Dedup: Merged duplicate '{job.get('title')}' at '{job.get('company')}' (sources: {seen[key]['site']})")
+        else:
+            seen[key] = job
+    
+    deduped = list(seen.values())
+    removed = len(jobs) - len(deduped)
+    if removed > 0:
+        logger.info(f"Deduplication removed {removed} duplicate jobs. {len(deduped)} unique jobs remain.")
+    return deduped
 
 def run_gemini_google_search(search_term: str, location: str, results_wanted: int = 15) -> List[Dict[str, Any]]:
     """

@@ -1,7 +1,8 @@
 import os
+import re
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pypdf import PdfReader
 from google import genai
 from google.genai import types
@@ -229,7 +230,7 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
     def analyze_matches_batch(self, resume_text: str, jobs: list) -> Dict[str, Dict[str, Any]]:
         """
         Analyzes a batch of jobs against the resume in a single Gemini call.
-        Returns a dict mapping job_id -> match analysis dict.
+        Returns a dict mapping job_id -> match analysis dict with multi-dimensional scores.
         """
         logger.info(f"Analyzing {len(jobs)} jobs in batch...")
         if not jobs:
@@ -258,19 +259,25 @@ You are an expert recruiter and resume reviewer. Compare the Candidate Resume te
 
 === Output Instructions ===
 Compare the candidate's resume against each job opening. For each job, compute:
-1. `match_score`: An integer from 0 to 100 representing how well the candidate fits the job. If the job description is extremely short, missing, or generic, evaluate based on the job title and general resume relevance, and assign a neutral score (e.g., 50-65) rather than penalizing the candidate heavily.
-2. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit. If description details are sparse, explicitly state: "Limited description details available for detailed mapping."
-3. `matched_keywords`: Key technical skills/keywords that exist in both the job description (or title) and the resume.
-4. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume. Leave empty if description is sparse.
-5. `strengths`: Bullet points listing the candidate's main strengths matching the job.
-6. `weaknesses`: Bullet points listing gaps or weaknesses relative to the job requirements.
+1. `skills_score`: An integer from 0 to 100 representing how well the candidate's technical skills match the job requirements.
+2. `experience_score`: An integer from 0 to 100 representing how well the candidate's years of experience and seniority level align with the job.
+3. `education_score`: An integer from 0 to 100 representing how well the candidate's education matches the job requirements.
+4. `overall_score`: A weighted composite integer from 0 to 100 calculated as: Skills 50% + Experience 30% + Education 20%. If the job description is extremely short, missing, or generic, evaluate based on the job title and general resume relevance, and assign a neutral score (e.g., 50-65) rather than penalizing the candidate heavily.
+5. `summary`: A concise 2-sentence summary explaining why they are or are not a good fit. If description details are sparse, explicitly state: "Limited description details available for detailed mapping."
+6. `matched_keywords`: Key technical skills/keywords that exist in both the job description (or title) and the resume.
+7. `missing_keywords`: Important keywords/skills listed in the job description that are missing from the resume. Leave empty if description is sparse.
+8. `strengths`: Bullet points listing the candidate's main strengths matching the job.
+9. `weaknesses`: Bullet points listing gaps or weaknesses relative to the job requirements.
 
 Return the result STRICTLY as a JSON object containing a single key "matches", which is a list of objects. Each object in the list must correspond to the input jobs, using the same "id":
 {{
   "matches": [
     {{
       "id": "job-id-from-input",
-      "match_score": 85,
+      "skills_score": 80,
+      "experience_score": 70,
+      "education_score": 90,
+      "overall_score": 79,
       "summary": "Candidate has strong backend experience matching FastAPI and Python requirements. However, they lack the Docker containerization skills.",
       "matched_keywords": ["Python", "FastAPI", "SQL"],
       "missing_keywords": ["Docker", "Kubernetes"],
@@ -303,6 +310,10 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
                     if job_id:
                         # Provide defaults for missing keys
                         defaults = {
+                            "skills_score": 50,
+                            "experience_score": 50,
+                            "education_score": 50,
+                            "overall_score": 50,
                             "match_score": 50,
                             "summary": "Match computed successfully.",
                             "matched_keywords": [],
@@ -313,6 +324,9 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
                         for k, v in defaults.items():
                             if k not in match:
                                 match[k] = v
+                        # Ensure match_score mirrors overall_score for backwards compatibility
+                        if "overall_score" in match:
+                            match["match_score"] = match["overall_score"]
                         matches_map[job_id] = match
                 return matches_map
                 
@@ -322,6 +336,36 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
 
         logger.error(f"All Gemini models failed for batch match analysis. Last error: {str(last_error)}", exc_info=True)
         return {}
+
+    @staticmethod
+    def compute_ats_keyword_hit_rate(resume_text: str, matched_keywords: list, missing_keywords: list) -> dict:
+        """
+        Performs a literal case-insensitive scan of the resume for each keyword
+        from the matched and missing keyword lists.
+        Returns a dict with hit_rate percentage and per-keyword hit details.
+        """
+        import re
+        resume_lower = resume_text.lower()
+        
+        all_keywords = list(set(matched_keywords + missing_keywords))
+        if not all_keywords:
+            return {"ats_keyword_hit_rate": 100, "keyword_hits": {}}
+        
+        keyword_hits = {}
+        hits = 0
+        for kw in all_keywords:
+            # Use word boundary matching for accuracy
+            pattern = re.compile(r'\b' + re.escape(kw.lower()) + r'\b')
+            count = len(pattern.findall(resume_lower))
+            keyword_hits[kw] = count
+            if count > 0:
+                hits += 1
+        
+        hit_rate = round((hits / len(all_keywords)) * 100) if all_keywords else 100
+        return {
+            "ats_keyword_hit_rate": hit_rate,
+            "keyword_hits": keyword_hits
+        }
 
 if __name__ == "__main__":
     # Test if script runs and accesses Gemini successfully

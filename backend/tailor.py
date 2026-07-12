@@ -102,6 +102,77 @@ Do NOT output any markdown blocks like ```json or any other text before/after th
             ]
         }
 
+    def generate_cover_letter(self, resume_text: str, job_title: str, job_desc: str, company: str) -> Dict[str, Any]:
+        """
+        Generates a tailored cover letter using the candidate's resume and job details.
+        Returns:
+            - cover_letter_text: The generated cover letter.
+            - key_points_highlighted: List of points emphasized.
+        """
+        logger.info(f"Generating cover letter for '{job_title}' at '{company}'")
+        
+        prompt = f"""
+You are an expert career coach and cover letter writer. Write a professional, targeted cover letter for the candidate applying to the job below.
+IMPORTANT: Strictly use the candidate's actual resume to pull real achievements and skills. DO NOT fabricate any experience, skills, or metrics.
+
+=== Target Job Details ===
+Title: {job_title}
+Company: {company}
+Description:
+{job_desc}
+
+=== Candidate Resume ===
+{resume_text}
+
+=== Instructions ===
+1. Write a compelling 3-4 paragraph cover letter.
+2. Address it to the Hiring Manager.
+3. Highlight 2-3 specific achievements or skills from the resume that directly align with the job description.
+4. Keep the tone professional, confident, and enthusiastic.
+5. Also provide a summary list of the key points you highlighted.
+
+Return the result STRICTLY as a JSON object with this exact key:
+{{
+  "cover_letter_text": "Dear Hiring Manager,\\n\\nI am writing to express my interest in the...",
+  "key_points_highlighted": [
+    "Highlighted 3 years of Python experience matching backend requirements.",
+    "Emphasized REST API design achievements."
+  ]
+}}
+Do NOT output any markdown blocks like ```json or any other text before/after the JSON. Just the raw JSON.
+"""
+        last_error = None
+        for model in self.models:
+            logger.info(f"Attempting cover letter generation with model {model}...")
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                
+                raw_text = response.text.strip()
+                result = json.loads(raw_text)
+                
+                if "cover_letter_text" not in result:
+                    result["cover_letter_text"] = "Failed to generate cover letter."
+                if "key_points_highlighted" not in result:
+                    result["key_points_highlighted"] = []
+                    
+                return result
+
+            except Exception as e:
+                logger.warning(f"Gemini cover letter generation failed with model {model}: {str(e)}")
+                last_error = e
+
+        logger.error(f"All Gemini models failed for cover letter generation. Last error: {str(last_error)}", exc_info=True)
+        return {
+            "cover_letter_text": f"API call failed: {str(last_error)}",
+            "key_points_highlighted": []
+        }
+
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
